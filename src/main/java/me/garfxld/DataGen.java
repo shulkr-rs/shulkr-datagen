@@ -21,6 +21,7 @@ public class DataGen {
         write(output.resolve("block.json"), new BlockGenerator().generate());
         write(output.resolve("block_entity_type.json"), new BlockEntityTypeGenerator().generate());
         write(output.resolve("entity_type.json"), new EntityTypeGenerator().generate());
+        write(output.resolve("environment_attribute.json"), new EnvironmentAttributeGenerator().generate());
         write(output.resolve("item.json"), new ItemGenerator().generate());
 
         new DatapackGenerator().generate(output.resolve("datapack"));
