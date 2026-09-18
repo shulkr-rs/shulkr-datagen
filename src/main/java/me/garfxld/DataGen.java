@@ -23,6 +23,7 @@ public class DataGen {
         write(output.resolve("entity_type.json"), new EntityTypeGenerator().generate());
         write(output.resolve("environment_attribute.json"), new EnvironmentAttributeGenerator().generate());
         write(output.resolve("item.json"), new ItemGenerator().generate());
+        write(output.resolve("sound_event.json"), new SoundEventGenerator().generate());
 
         new DatapackGenerator().generate(output.resolve("datapack"));
 
