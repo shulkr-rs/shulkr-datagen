@@ -24,6 +24,7 @@ public class DataGen {
         write(output.resolve("environment_attribute.json"), new EnvironmentAttributeGenerator().generate());
         write(output.resolve("item.json"), new ItemGenerator().generate());
         write(output.resolve("sound_event.json"), new SoundEventGenerator().generate());
+        write(output.resolve("fluid.json"), new FluidGenerator().generate());
 
         new DatapackGenerator().generate(output.resolve("datapack"));
 

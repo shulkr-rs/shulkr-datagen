@@ -5,11 +5,18 @@ import com.google.gson.JsonObject;
 import me.garfxld.DataGenerator;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.core.registries.Registries;
 import net.minecraft.world.level.EmptyBlockGetter;
 import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.Mirror;
+import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.block.entity.BlockEntityType;
+import net.minecraft.world.level.block.state.BlockBehaviour;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
+import net.minecraft.world.level.material.Fluid;
+import net.minecraft.world.level.material.Fluids;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.shapes.CollisionContext;
 import net.minecraft.world.phys.shapes.VoxelShape;
@@ -24,6 +31,43 @@ import java.util.stream.Stream;
 
 public class BlockGenerator implements DataGenerator {
 
+    public static final int IS_AIR = 1;
+    public static final int IS_LIQUID = 1 << 1;
+    public static final int IS_SOLID = 1 << 2;
+    public static final int IS_SOLID_RENDER = 1 << 3;
+    public static final int CAN_OCCLUDE = 1 << 4;
+    public static final int CAN_BE_REPLACED = 1 << 5;
+    public static final int USE_SHAPE_FOR_LIGHT_OCCLUSION = 1 << 6;
+    public static final int PROPAGATES_SKYLIGHT_DOWN = 1 << 7;
+    public static final int IS_RANDOMLY_TICKING = 1 << 8;
+    public static final int IGNITED_BY_LAVA = 1 << 9;
+    public static final int HAS_DYNAMIC_SHAPE = 1 << 10;
+
+    /// Light levels live in the low bits, the flags above them.
+    private static int packProperties(BlockState state) {
+        var flags = 0;
+        if (state.isAir()) flags |= IS_AIR;
+        if (state.liquid()) flags |= IS_LIQUID;
+        if (state.isSolid()) flags |= IS_SOLID;
+        if (state.isSolidRender()) flags |= IS_SOLID_RENDER;
+        if (state.canOcclude()) flags |= CAN_OCCLUDE;
+        if (state.canBeReplaced()) flags |= CAN_BE_REPLACED;
+        if (state.useShapeForLightOcclusion()) flags |= USE_SHAPE_FOR_LIGHT_OCCLUSION;
+        if (state.propagatesSkylightDown()) flags |= PROPAGATES_SKYLIGHT_DOWN;
+        if (state.isRandomlyTicking()) flags |= IS_RANDOMLY_TICKING;
+        if (state.ignitedByLava()) flags |= IGNITED_BY_LAVA;
+        if (state.getBlock().hasDynamicShape()) flags |= HAS_DYNAMIC_SHAPE;
+
+        var emission = state.getLightEmission();
+        var dampening = state.getLightDampening();
+        if (emission > 15 || dampening > 15) {
+            throw new IllegalStateException("light level does not fit in 4 bits");
+        }
+
+        return emission | (dampening << 4) | (flags << 8);
+    }
+
+
     @Override
     public String generate() {
         var blockRegistry = BuiltInRegistries.BLOCK;
@@ -32,9 +76,6 @@ public class BlockGenerator implements DataGenerator {
         var blocksJson = new JsonObject();
         var currStateId = 0;
 
-        // Unique shape data.
-        // Key   = AABBs making up the shape
-        // Value = actual VoxelShape
         var shapesByKey = new LinkedHashMap<List<AABB>, VoxelShape>();
 
         for (var block : blockRegistry) {
@@ -53,11 +94,6 @@ public class BlockGenerator implements DataGenerator {
                     currStateId + possibleStates.size() - 1
             );
 
-            /*
-             * First pass:
-             *
-             * Collect every unique shape used by every state of this block.
-             */
             for (var blockState : possibleStates) {
                 var shape = blockState.getShape(
                         EmptyBlockGetter.INSTANCE,
@@ -82,23 +118,24 @@ public class BlockGenerator implements DataGenerator {
                         CollisionContext.empty()
                 );
 
+                var supportShape = blockState.getBlockSupportShape(
+                        EmptyBlockGetter.INSTANCE,
+                        BlockPos.ZERO
+                );
+
                 for (var s : List.of(
                         shape,
                         collisionShape,
                         interactionShape,
                         occlusionShape,
-                        visualShape
+                        visualShape,
+                        supportShape
                 )) {
                     shapesByKey.putIfAbsent(s.toAabbs(), s);
                 }
             }
 
-            /*
-             * Build the final shape list and an index lookup.
-             *
-             * The index here corresponds to the index in the final
-             * top-level "shapes" JSON array.
-             */
+
             var shapeIndices = new LinkedHashMap<List<AABB>, Integer>();
 
             var shapes = new ArrayList<>(shapesByKey.values());
@@ -109,7 +146,6 @@ public class BlockGenerator implements DataGenerator {
 
             var shapesJson = new JsonObject();
 
-// Generate the default shape mapping
             var defaultShapes = List.of(
                     defaultBlockState.getShape(
                             EmptyBlockGetter.INSTANCE,
@@ -128,6 +164,10 @@ public class BlockGenerator implements DataGenerator {
                             EmptyBlockGetter.INSTANCE,
                             BlockPos.ZERO,
                             CollisionContext.empty()
+                    ),
+                    defaultBlockState.getBlockSupportShape(
+                            EmptyBlockGetter.INSTANCE,
+                            BlockPos.ZERO
                     )
             );
 
@@ -137,7 +177,6 @@ public class BlockGenerator implements DataGenerator {
 
             shapesJson.addProperty("*", defaultShapeKey);
 
-// Generate only states that differ from the default
             for (var blockState : possibleStates) {
                 if (blockState == defaultBlockState) {
                     continue;
@@ -161,6 +200,10 @@ public class BlockGenerator implements DataGenerator {
                                 EmptyBlockGetter.INSTANCE,
                                 BlockPos.ZERO,
                                 CollisionContext.empty()
+                        ),
+                        blockState.getBlockSupportShape(
+                                EmptyBlockGetter.INSTANCE,
+                                BlockPos.ZERO
                         )
                 );
 
@@ -168,7 +211,6 @@ public class BlockGenerator implements DataGenerator {
                         .map(s -> String.valueOf(shapeIndices.get(s.toAabbs())))
                         .collect(java.util.stream.Collectors.joining(","));
 
-                // Don't write it if it matches the default/fallback
                 if (stateShapeKey.equals(defaultShapeKey)) {
                     continue;
                 }
@@ -179,23 +221,117 @@ public class BlockGenerator implements DataGenerator {
                         String.valueOf(stateId),
                         stateShapeKey
                 );
+
+
+
+
             }
 
             blockJson.add("shapes", shapesJson);
 
-            /*
-             * Verify that our state ID counter matches Minecraft's
-             * state registry.
-             */
+            var fluidStatesJson = new JsonObject();
+            var defaultFluidStateId = Fluid.FLUID_STATE_REGISTRY.getId(
+                    defaultBlockState.getFluidState()
+            );
+            fluidStatesJson.addProperty("*", defaultFluidStateId);
+
+            for (var blockState : possibleStates) {
+                if (blockState == defaultBlockState) {
+                    continue;
+                }
+
+                var fluidStateId = Fluid.FLUID_STATE_REGISTRY.getId(
+                        blockState.getFluidState()
+                );
+                if (fluidStateId == defaultFluidStateId) {
+                    continue;
+                }
+
+                fluidStatesJson.addProperty(
+                        String.valueOf(Block.BLOCK_STATE_REGISTRY.getId(blockState)),
+                        fluidStateId
+                );
+            }
+
+            blockJson.add("fluidStates", fluidStatesJson);
+
+            var propertiesJson = new JsonObject();
+            var defaultProperties = packProperties(defaultBlockState);
+            propertiesJson.addProperty("*", defaultProperties);
+
+            for (var blockState : possibleStates) {
+                if (blockState == defaultBlockState) {
+                    continue;
+                }
+
+                var stateProperties = packProperties(blockState);
+                if (stateProperties == defaultProperties) {
+                    continue;
+                }
+
+                propertiesJson.addProperty(
+                        String.valueOf(Block.BLOCK_STATE_REGISTRY.getId(blockState)),
+                        stateProperties
+                );
+            }
+
+            blockJson.add("stateProperties", propertiesJson);
+
+            var transformsJson = new JsonObject();
+            for (var blockState : possibleStates) {
+                var stateId = Block.BLOCK_STATE_REGISTRY.getId(blockState);
+
+                var entry = new JsonObject();
+                addTransform(entry, "cw90", blockState, blockState.rotate(Rotation.CLOCKWISE_90));
+                addTransform(entry, "cw180", blockState, blockState.rotate(Rotation.CLOCKWISE_180));
+                addTransform(
+                        entry,
+                        "ccw90",
+                        blockState,
+                        blockState.rotate(Rotation.COUNTERCLOCKWISE_90)
+                );
+                addTransform(
+                        entry,
+                        "leftRight",
+                        blockState,
+                        blockState.mirror(Mirror.LEFT_RIGHT)
+                );
+                addTransform(
+                        entry,
+                        "frontBack",
+                        blockState,
+                        blockState.mirror(Mirror.FRONT_BACK)
+                );
+
+                if (!entry.isEmpty()) {
+                    transformsJson.add(String.valueOf(stateId), entry);
+                }
+            }
+
+            if (!transformsJson.isEmpty()) {
+                blockJson.add("transforms", transformsJson);
+            }
+
+            if (defaultBlockState.hasOffsetFunction()) {
+                var offsetJson = new JsonObject();
+                offsetJson.addProperty("type", offsetType(defaultBlockState));
+                offsetJson.addProperty(
+                        "maxHorizontal",
+                        invokeFloat(block, "getMaxHorizontalOffset")
+                );
+                offsetJson.addProperty(
+                        "maxVertical",
+                        invokeFloat(block, "getMaxVerticalOffset")
+                );
+                blockJson.add("offset", offsetJson);
+            }
+
             if (currStateId != defaultStateId) {
                 IO.println("Different " + block.getDescriptionId());
             }
 
             currStateId += possibleStates.size();
 
-            /*
-             * Block properties.
-             */
             var propsJson = new JsonArray();
 
             for (var property : block.getStateDefinition().getProperties()) {
@@ -211,9 +347,6 @@ public class BlockGenerator implements DataGenerator {
             blocksJson.add(key.toString(), blockJson);
         }
 
-        /*
-         * Resolve block entities.
-         */
         for (var blockEntityType : blockEntityTypeRegistry) {
             final var location = blockEntityTypeRegistry.getKey(blockEntityType);
 
@@ -268,6 +401,43 @@ public class BlockGenerator implements DataGenerator {
         finalJson.add("blocks", blocksJson);
 
         return finalJson.toString();
+    }
+
+    /// Records a transform only when it actually changes the state.
+    private static void addTransform(
+            JsonObject json,
+            String name,
+            BlockState from,
+            BlockState to
+    ) {
+        if (from == to) {
+            return;
+        }
+
+        json.addProperty(name, Block.BLOCK_STATE_REGISTRY.getId(to));
+    }
+
+    /// The offset type, found by sampling whether the offset ever moves on Y.
+    private static String offsetType(BlockState state) {
+        for (var x = 0; x < 16; x++) {
+            for (var z = 0; z < 16; z++) {
+                if (state.getOffset(new BlockPos(x, 0, z)).y != 0.0) {
+                    return "XYZ";
+                }
+            }
+        }
+
+        return "XZ";
+    }
+
+    private static float invokeFloat(Block block, String name) {
+        try {
+            var method = BlockBehaviour.class.getDeclaredMethod(name);
+            method.setAccessible(true);
+            return (float) method.invoke(block);
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException("failed to read " + name, e);
+        }
     }
 
     public static String getConstantName(Class<?> clazz, Object value) {
