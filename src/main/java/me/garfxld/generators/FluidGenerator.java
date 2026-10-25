@@ -6,7 +6,6 @@ import me.garfxld.DataGenerator;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.material.Fluid;
-import net.minecraft.world.level.material.FlowingFluid;
 import net.minecraft.world.level.material.FluidState;
 
 import java.util.ArrayList;
@@ -29,17 +28,6 @@ public class FluidGenerator implements DataGenerator {
                     Fluid.FLUID_STATE_REGISTRY.getId(fluid.defaultFluidState())
             );
 
-            if (fluid instanceof FlowingFluid flowing) {
-                fluidJson.addProperty(
-                        "source",
-                        BuiltInRegistries.FLUID.getKey(flowing.getSource()).toString()
-                );
-                fluidJson.addProperty(
-                        "flowing",
-                        BuiltInRegistries.FLUID.getKey(flowing.getFlowing()).toString()
-                );
-            }
-
             fluidsJson.add(key.toString(), fluidJson);
 
             List<FluidState> possibleStates = fluid.getStateDefinition().getPossibleStates();
@@ -51,11 +39,7 @@ public class FluidGenerator implements DataGenerator {
                 stateJson.addProperty("isFull", state.isFull());
                 stateJson.addProperty("isRandomlyTicking", state.isRandomlyTicking());
                 stateJson.addProperty("amount", state.getAmount());
-                stateJson.addProperty(
-                        "falling",
-                        state.hasProperty(FlowingFluid.FALLING)
-                                && state.getValue(FlowingFluid.FALLING)
-                );
+                stateJson.addProperty("falling", state.isFalling());
                 stateJson.addProperty(
                         "blockStateId",
                         Block.getId(state.createLegacyBlock())
